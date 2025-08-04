@@ -104,26 +104,13 @@ use_tf32 = bool(strtobool(sys.argv[18]))
 use_benchmark = bool(strtobool(sys.argv[19]))
 use_deterministic = bool(strtobool(sys.argv[20]))
 use_multiscale_mel_loss = strtobool(sys.argv[21])
-use_exp_lr_decay = strtobool(sys.argv[22])
-use_validation = strtobool(sys.argv[23])
-double_d_update = strtobool(sys.argv[24])
-if double_d_update:
-    d_updates_per_step = 2
-else:
-    d_updates_per_step = 1
-    
-# Custom lr safety
-use_custom_lr = strtobool(sys.argv[25])
-if use_custom_lr:
-    try:
-        custom_lr_g = float(sys.argv[26])
-        custom_lr_d = float(sys.argv[27])
-    except (IndexError, ValueError):
-        print("Custom LR for Generator and Discriminator is enabled, but the values aren't set properly / are invalid.")
-        sys.exit(1)
-else:
-    custom_lr_g = None
-    custom_lr_d = None
+lr_scheduler = sys.argv[22]
+exp_decay_gamma = float(sys.argv[23])
+use_validation = strtobool(sys.argv[24])
+double_d_update = strtobool(sys.argv[25])
+use_custom_lr = strtobool(sys.argv[26])
+custom_lr_g, custom_lr_d = (float(sys.argv[27]), float(sys.argv[28])) if use_custom_lr else (None, None)
+assert not use_custom_lr or (custom_lr_g and custom_lr_d), "Invalid custom LR values."
 
 # Parse command line arguments end region ===========================
 
@@ -147,8 +134,10 @@ config.data.training_files = os.path.join(experiment_dir, "filelist.txt")
 
 # Globals ( do not touch these. )
 global_step = 0
+d_updates_per_step = 2 if double_d_update else 1
 warmup_completed = False
 from_scratch = False
+use_lr_scheduler = lr_scheduler != "none"
 
 # Torch backends config
 torch.backends.cuda.matmul.allow_tf32 = use_tf32
@@ -431,39 +420,47 @@ def run(
 
     # Warmup init msg:
     if rank == 0 and use_warmup:
-        print(f"    ██████  Warmup Enabled for {warmup_duration} epochs. ██████")
+        print(f"    ██████  Warmup Enabled for {warmup_duration} epochs.")
 
     # Precision init msg:
     if not config.train.bf16_run:
         if torch.backends.cuda.matmul.allow_tf32 and torch.backends.cudnn.allow_tf32:
-            print("    ██████  PRECISION: TF32                               ██████")
+            print("    ██████  PRECISION: TF32")
         else:
-            print("    ██████  PRECISION: FP32                               ██████")
+            print("    ██████  PRECISION: FP32")
     else:
-        print("    ██████  PRECISION: BrainFloat16 AMP                   ██████")
+        if torch.backends.cuda.matmul.allow_tf32 and torch.backends.cudnn.allow_tf32:
+            print("    ██████  PRECISION: TF32 / BF16 - AMP")
+        else:
+            print("    ██████  PRECISION: FP32 / BF16 - AMP")
 
     # backends.cudnn checks:
         # For benchmark:
     if torch.backends.cudnn.benchmark:
-        print("    ██████  cudnn.benchmark: True                         ██████")
+        print("    ██████  cudnn.benchmark: True")
     else:
-        print("    ██████  cudnn.benchmark: False                        ██████")
+        print("    ██████  cudnn.benchmark: False")
         # For deterministic:
     if torch.backends.cudnn.deterministic:
-        print("    ██████  cudnn.deterministic: True                     ██████")
+        print("    ██████  cudnn.deterministic: True")
     else:
-        print("    ██████  cudnn.deterministic: False                    ██████")
+        print("    ██████  cudnn.deterministic: False")
 
     # optimizer check:
-    print(f"    ██████  Optimizer used: {optimizer_choice}           ██████")
+    print(f"    ██████  Optimizer used: {optimizer_choice}")
 
     # Training strategy checks:
     if d_updates_per_step == 2:
-        print("    ██████  Double-update for Discriminator: Yes          ██████")
-        print(f"    ██████  Amount of D updates per step: {d_updates_per_step}              ██████")
+        print("    ██████  Double-update for Discriminator: Yes")
 
     # Validation check:
-    print(f"    ██████  Using Validation: {use_validation}                         ██████")
+    print(f"    ██████  Using Validation: {use_validation}")
+
+    if use_lr_scheduler:
+        if lr_scheduler == "exp decay":
+            print(f"    ██████  lr scheduler: exponential lr decay with gamma of: {exp_decay_gamma}")
+        if lr_scheduler == "cosine annealing":
+            print(f"    ██████  lr scheduler: cosine annealing")
 
     if rank == 0:
         writer_eval = SummaryWriter(
@@ -630,7 +627,7 @@ def run(
         weight_decay=0,
     )
     common_args_g_adamw_bfloat16 = dict(
-        lr=custom_lr_d if use_custom_lr else config.train.learning_rate,
+        lr=custom_lr_g if use_custom_lr else config.train.learning_rate,
         betas=(0.8, 0.99),
         eps=1e-9,
         weight_decay= 0.0, # 0.001,   # tried: 0.0001, 0.00001  ( default: # 0.0,
@@ -752,10 +749,10 @@ def run(
 
     if use_multiscale_mel_loss:
         fn_mel_loss = MultiScaleMelSpectrogramLoss(sample_rate=sample_rate)
-        print("    ██████  Using Multi-Scale Mel loss function           ██████")
+        print("    ██████  Using Multi-Scale Mel loss function")
     else:
         fn_mel_loss = torch.nn.L1Loss()
-        print("    ██████  Using Single-Scale (L1) Mel loss function     ██████")
+        print("    ██████  Using Single-Scale (L1) Mel loss function")
 
 
     # Wrap models with DDP for multi-gpu processing
@@ -765,7 +762,7 @@ def run(
 
     # Load checkpoint if available
     try:
-        print("    ██████  Starting the training ...                     ██████")
+        print("    ██████  Starting the training ...")
         # RingFormer uses 2 discs: MPD and MS-SB-CQT and shared optimizer;
         if vocoder == "RingFormer":
             _, _, _, _, epoch_str = load_checkpoints(
@@ -835,7 +832,7 @@ def run(
     if (pretrainG in ["", "None"]) and (pretrainD in ["", "None"]):
         from_scratch = True
         if rank == 0:
-            print("    ██████  No pretrains used: Average loss disabled!     ██████")
+            print("    ██████  No pretrains used: Average loss disabled!")
 
 
     # Initialize the warmup scheduler only if `use_warmup` is True
@@ -858,16 +855,14 @@ def run(
             if 'initial_lr' not in param_group:
                 param_group['initial_lr'] = param_group['lr']
 
-    if use_exp_lr_decay:
-        # Exponential decay lr scheduler
-        # For: Generator
-        decay_scheduler_g = torch.optim.lr_scheduler.ExponentialLR(
-            optim_g, gamma=0.999875, last_epoch=epoch_str - 1  #  ( stock ) 0.999875 <=> ( finetuning ) 0.995 <=> ( 50% slower ) 0.9975 <=> ( 30% slower ) 0.9965
-        )
-        # For: Discriminator
-        decay_scheduler_d = torch.optim.lr_scheduler.ExponentialLR(
-            optim_d, gamma=0.999875, last_epoch=epoch_str - 1  #  ( stock ) 0.999875 <=> ( finetuning ) 0.995  <=>  ( 50% slower ) 0.9975 <=> ( 30% slower ) 0.9965
-        )
+    if use_lr_scheduler:
+        if lr_scheduler == "exp decay":
+            # Exponential decay lr scheduler
+            scheduler_g = torch.optim.lr_scheduler.ExponentialLR( optim_g, gamma=exp_decay_gamma, last_epoch=epoch_str - 1 )
+            scheduler_d = torch.optim.lr_scheduler.ExponentialLR( optim_d, gamma=exp_decay_gamma, last_epoch=epoch_str - 1 )
+        elif lr_scheduler == "cosine annealing":
+            scheduler_g = torch.optim.lr_scheduler.CosineAnnealingLR( optim_g, T_max=custom_total_epoch, eta_min=3e-5, last_epoch=epoch_str - 1 )
+            scheduler_d = torch.optim.lr_scheduler.CosineAnnealingLR( optim_d, T_max=custom_total_epoch, eta_min=3e-5, last_epoch=epoch_str - 1 )
 
     # Reference sample fetching mechanism:
     # Feel free to customize the path or namings ( make sure to change em in ' if ' block too. )
@@ -946,19 +941,23 @@ def run(
             # Logging of finished warmup
             if epoch == warmup_duration:
                 warmup_completed = True
-                print(f"    ██████  Warmup completed at pochs: {warmup_duration}  ██████")
+                print(f"    ██████  Warmup completed at epochs: {warmup_duration}")
                 # Gen:
-                print(f"    ██████  LR G: {optim_g.param_groups[0]['lr']}         ██████")
+                print(f"    ██████  LR G: {optim_g.param_groups[0]['lr']}")
                 # Discs:
-                print(f"    ██████  LR D: {optim_d.param_groups[0]['lr']}         ██████")
-                # Decay gamma:
-                print(f"    ██████  Starting the exponential lr decay with gamma of {config.train.lr_decay}  ██████")
+                print(f"    ██████  LR D: {optim_d.param_groups[0]['lr']}")
+                # scheduler:
+                if lr_scheduler == "exp decay":
+                    print(f"    ██████  Starting the exponential lr decay with gamma of {exp_decay_gamma}")
+                elif lr_scheduler == "cosine annealing":
+                    print("    ██████  Starting cosine annealing scheduler " )
+
  
-        if use_exp_lr_decay:
+        if use_lr_scheduler:
             # Once the warmup phase is completed, uses exponential lr decay
             if not use_warmup or warmup_completed:
-                decay_scheduler_g.step()
-                decay_scheduler_d.step()
+                scheduler_g.step()
+                scheduler_d.step()
 
 
 def training_loop(
@@ -989,7 +988,8 @@ def training_loop(
         hps (Namespace): Hyperparameters.
         nets (list): List of models [net_g, net_d_mpd].
         optims (list): List of optimizers [optim_g, net_d_mpd].
-        loaders (list): List of dataloaders [train_loader, eval_loader].
+        train_loader: training dataloader.
+        val_loader: validation dataloader.
         writers (list): List of TensorBoard writers [writer_eval].
         cache (list): List to cache data in GPU memory.
         use_cpu (bool): Whether to use CPU for training.

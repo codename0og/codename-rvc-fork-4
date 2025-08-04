@@ -663,11 +663,20 @@ def train_tab():
                         value=False,
                         interactive=True,
                     )
-                    use_exp_lr_decay = gr.Checkbox(
-                        label="Use exp. lr decay scheduler",
-                        info="Enabled by default. **Don't disable it unless you know what you're doing!**",
-                        value=True,
+                    lr_scheduler = gr.Radio(
+                        label="Learning rate scheduler",
+                        info="exp decay: decays the lr exponentially - safe default. \n cosine annealing: cosine annealing schedule - optional alternative. \n none: no scheduler - For debugging or developing. ",
+                        choices=["exp decay", "cosine annealing", "none"],
+                        value="exp decay",
                         interactive=True,
+                    )
+                    exp_decay_gamma = gr.Radio(
+                        label="Exponential decay gamma",
+                        info="Gamma / decay factor for exponential lr scheduler",
+                        choices=["0.999875", "0.999", "0.9975", "0.995"],
+                        value="0.999875",
+                        interactive=True,
+                        visible=True,
                     )
                     use_validation = gr.Checkbox(
                         label="Enable hold-out validation",
@@ -830,7 +839,8 @@ def train_tab():
                     use_benchmark,
                     use_deterministic,
                     use_multiscale_mel_loss,
-                    use_exp_lr_decay,
+                    lr_scheduler,
+                    exp_decay_gamma,
                     use_validation,
                     double_d_update,
                     use_custom_lr,
@@ -908,6 +918,11 @@ def train_tab():
             def toggle_visible_hop_length(f0_method):
                 if f0_method == "crepe" or f0_method == "crepe-tiny":
                     return {"visible": False, "__type__": "update"}
+                return {"visible": False, "__type__": "update"}
+
+            def toggle_visible_gamma(lr_scheduler):
+                if lr_scheduler == "exp decay":
+                    return {"visible": True, "__type__": "update"}
                 return {"visible": False, "__type__": "update"}
 
             def toggle_pretrained(pretrained, custom_pretrained):
@@ -1081,6 +1096,11 @@ def train_tab():
                 fn=toggle_visible,
                 inputs=[use_custom_lr],
                 outputs=[custom_lr_settings],
+            )
+            lr_scheduler.change(
+                fn=toggle_visible_gamma,
+                inputs=[lr_scheduler],
+                outputs=[exp_decay_gamma],
             )
             multiple_gpu.change(
                 fn=toggle_visible,

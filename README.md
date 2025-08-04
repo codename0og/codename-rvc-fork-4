@@ -13,7 +13,9 @@
 ## A lil bit more about the project:
 
 ### This fork is pretty much my personal take on Applio. ✨
-`Goal of this project is for me to have a much more flexible base than mainline rvc.`
+``You could say.. A more advanced features-rich Applio ~ With my lil twist.``
+<br/>
+``But If you have any ideas, want to pr or collaborate, feel free to do so!``
 <br/>
 ㅤ
 <br/>
@@ -55,7 +57,7 @@ Expect issues with PESQ and data alignment If the following requirements are not
  
 - New logging mechanism for losses: Average loss per epoch logged as the standard loss, <br/>and rolling average loss over 50 steps to evaluate general trends and the model's performance over time.
  
-- From-ui quick tweaks; lr for g/d, scheduler, linear warmup etc.
+- From-ui quick tweaks; lr for g/d, schedulers, linear warmup etc.
 
  
  
@@ -65,11 +67,10 @@ Expect issues with PESQ and data alignment If the following requirements are not
  
  
 ✨ to-do list ✨
-> - Ability to choose lr_decay from the ui.
+> - None
  
 💡 Ideas / concepts 💡
-> - ~~Propably improving the mel-similarity.. or generally expanding the idea.~~ Irrelevant. Functionality taken over by hold-out validation mechanism.
-> - and more.. perhaps ..
+> - Currently none. Open to your ideas ~
  
  
 ### ❗ For contact, please join my discord server ❗
