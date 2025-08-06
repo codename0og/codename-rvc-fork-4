@@ -71,13 +71,7 @@
         "gin_channels": 256,
         "spk_embed_dim": 109
     },
-    "cqt": {
-        "cqtd_filters": 128,
-        "cqtd_max_filters": 1024,
-        "cqtd_filters_scale": 1,
-        "cqtd_dilations": [1, 2, 4],
-        "cqtd_hop_lengths": [512, 256, 256],
-        "cqtd_n_octaves": [9, 9, 9],
-        "cqtd_bins_per_octaves": [24, 36, 48]
+    "mrd": {
+        "resolutions": [[1024, 120, 600], [2048, 240, 1200], [512, 50, 240]]
     }
 }

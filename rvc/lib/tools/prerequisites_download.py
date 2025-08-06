@@ -17,14 +17,14 @@ pretraineds_hifigan_list = [
             "f0G48k.pth",
         ],
     )
-]
+]                                 
 models_list = [
     ("predictors/", ["rmvpe.pt"]),
     ("predictors/", ["fcpe.pt"], "https://huggingface.co/Codename0/codename-rvc-fork-3-assets/resolve/main/models/predictors/fcpe")
 ]
 embedders_list = [
     ("embedders/contentvec/", ["pytorch_model.bin", "config.json"]),
-    ("embedders/spin/", ["pytorch_model.bin", "config.json"], "https://huggingface.co/Aznamir/spin/resolve/main")
+    ("embedders/spin/", ["pytorch_model.bin", "config.json"], "https://huggingface.co/IAHispano/Applio/resolve/main/Resources/embedders/spin")
 ]
 executables_list = [
     ("", ["ffmpeg.exe", "ffprobe.exe"]),
