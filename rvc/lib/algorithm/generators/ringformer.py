@@ -267,13 +267,13 @@ class RingFormerGenerator(torch.nn.Module):
         initial_channel, # 192
         resblock_kernel_sizes, # [3,7,11]
         resblock_dilation_sizes, # [[1,3,5], [1,3,5], [1,3,5]]
-        upsample_rates, # 48khz -> [12, 10], 44.1khz -> [16, 8]
+        upsample_rates, # [4, 4]
         upsample_initial_channel, # 512
-        upsample_kernel_sizes, # 48khz -> [24, 20], 44.1khz -> [32, 16]
-        gen_istft_n_fft, # 48khz -> [24], 44.1khz -> [32]
-        gen_istft_hop_size, # 4
+        upsample_kernel_sizes, # [8, 8]
+        gen_istft_n_fft, # 24khz: 60,  48khz: 120
+        gen_istft_hop_size, # 24khz: 15, 48khz: 30
         gin_channels, # 256
-        sr, # 48000 / 44100
+        sr, # 24000, 48000, 
         harmonic_num = 8, # NFS Patch
         block_size_custom = 512,
         inplace_masking = False,

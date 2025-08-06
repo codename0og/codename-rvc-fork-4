@@ -35,3 +35,4 @@ rvc/train/preprocess/preprocess_old - backup.py
 debug/
 DEV/
 *.pyc
+rvc/train/train - SEPARATED.py

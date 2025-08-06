@@ -10,6 +10,7 @@ arch_config_paths = {
     ],
     "ringformer": [
         os.path.join("ringformer", "48000.json"),
+        os.path.join("ringformer", "24000.json"),
     ],
 }
 

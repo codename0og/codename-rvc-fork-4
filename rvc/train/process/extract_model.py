@@ -46,6 +46,7 @@ def extract_model(
                 dataset_length = data.get("total_dataset_duration", None)
                 embedder_model = data.get("embedder_model", None)
                 speakers_id = data.get("speakers_id", 1)
+                vocoder_architecture = data.get("vocoder_architecture", None)
         else:
             dataset_length = None
 
@@ -58,6 +59,7 @@ def extract_model(
                 key: value.half() for key, value in ckpt.items() if "enc_q" not in key
             }
         )
+
         opt["config"] = [
             hps.data.filter_length // 2 + 1,
             32,
@@ -94,6 +96,13 @@ def extract_model(
         opt["embedder_model"] = embedder_model
         opt["speakers_id"] = speakers_id
         opt["vocoder"] = vocoder
+        opt["vocoder_architecture"] = vocoder_architecture
+
+        if vocoder == "RingFormer":
+            opt["ringformer_istft"] = [
+                hps.model.gen_istft_n_fft,
+                hps.model.gen_istft_hop_size,
+            ]
 
         torch.save(
             replace_keys_in_dict(

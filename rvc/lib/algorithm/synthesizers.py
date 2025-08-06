@@ -41,8 +41,8 @@ class Synthesizer(torch.nn.Module):
         vocoder: str = "HiFi-GAN",
         randomized: bool = True,
         checkpointing: bool = False,
-        gen_istft_n_fft: int = 24, #
-        gen_istft_hop_size: int = 4, #
+        gen_istft_n_fft: int = 120,
+        gen_istft_hop_size: int = 30,
         **kwargs,
     ):
         super().__init__()

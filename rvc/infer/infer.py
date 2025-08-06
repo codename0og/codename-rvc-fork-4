@@ -37,6 +37,7 @@ logging.getLogger("httpcore").setLevel(logging.WARNING)
 logging.getLogger("faiss").setLevel(logging.WARNING)
 logging.getLogger("faiss.loader").setLevel(logging.WARNING)
 
+debug_ringformer_config = False
 
 class VoiceConverter:
     """
@@ -473,12 +474,37 @@ class VoiceConverter:
             self.version = self.cpt.get("version", "v1")
             self.text_enc_hidden_dim = 768 if self.version == "v2" else 256
             self.vocoder = self.cpt.get("vocoder", "HiFi-GAN")
-            self.net_g = Synthesizer(
-                *self.cpt["config"],
-                use_f0=self.use_f0,
-                text_enc_hidden_dim=self.text_enc_hidden_dim,
-                vocoder=self.vocoder,
-            )
+
+            if debug_ringformer_config:
+                print("Config values:")
+                for i, value in enumerate(self.cpt["config"]):
+                    print(f"  [{i}] = {value}")
+
+                print("ringformer_istft values:")
+                for i, value in enumerate(self.cpt["ringformer_istft"]):
+                    print(f"  [{i}] = {value}")
+
+            if self.vocoder == "RingFormer":
+                ringformer_istft = self.cpt.get("ringformer_istft", [None, None])
+                self.gen_istft_n_fft = ringformer_istft[0]
+                self.gen_istft_hop_size = ringformer_istft[1]
+
+                self.net_g = Synthesizer(
+                    *self.cpt["config"],
+                    use_f0=self.use_f0,
+                    gen_istft_n_fft=self.gen_istft_n_fft,
+                    gen_istft_hop_size=self.gen_istft_hop_size,
+                    text_enc_hidden_dim=self.text_enc_hidden_dim,
+                    vocoder=self.vocoder,
+                )
+            else:
+                self.net_g = Synthesizer(
+                    *self.cpt["config"],
+                    use_f0=self.use_f0,
+                    text_enc_hidden_dim=self.text_enc_hidden_dim,
+                    vocoder=self.vocoder,
+                )
+
             del self.net_g.enc_q
             self.net_g.load_state_dict(self.cpt["weight"], strict=False)
             self.net_g = self.net_g.to(self.config.device).float()

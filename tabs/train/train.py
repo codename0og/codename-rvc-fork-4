@@ -319,8 +319,8 @@ def train_tab():
             with gr.Column():
                 sampling_rate = gr.Radio(
                     label="Sampling Rate",
-                    info="The sampling rate of the model you wanna train. \n( If possible, should match your dataset. Small deviations are allowed. )",
-                    choices=["32000", "40000", "48000"],
+                    info="The sampling rate of the model you wanna train. \n**( If possible, should match your dataset. Small deviations are allowed. )**",
+                    choices=["24000", "32000", "40000", "48000"],
                     value="48000",
                     interactive=True,
                 )
@@ -987,7 +987,7 @@ def train_tab():
                     vocoder_arch_value = "ringformer"
                     return (
                         {
-                            "choices": ["48000"],
+                            "choices": ["24000", "48000"],
                             "__type__": "update",
                             "value": "48000",
                         }, 

@@ -10,23 +10,23 @@
         "eps": 1e-09,
         "bf16_run": true,
         "lr_decay": 0.999875,
-        "segment_size": 17280,
+        "segment_size": 8640,
         "c_mel": 45,
         "c_kl": 1.0
     },
     "data": {
         "max_wav_value": 32768.0,
-        "sample_rate": 48000,
-        "filter_length": 2048,
-        "hop_length": 480,
-        "win_length": 2048,
-        "n_mel_channels": 128,
+        "sample_rate": 24000,
+        "filter_length": 1024,
+        "hop_length": 240,
+        "win_length": 1024,
+        "n_mel_channels": 64,
         "mel_fmin": 0.0,
         "mel_fmax": null
     },
     "model": {
-        "gen_istft_n_fft": 120,
-        "gen_istft_hop_size": 30,
+        "gen_istft_n_fft": 60,
+        "gen_istft_hop_size": 15,
         "inter_channels": 192,
         "hidden_channels": 192,
         "filter_channels": 768,
@@ -71,7 +71,13 @@
         "gin_channels": 256,
         "spk_embed_dim": 109
     },
-    "mrd": {
-        "resolutions": [[2048, 240, 1200], [4096, 480, 2400], [1024, 100, 480]]
+    "cqt": {
+        "cqtd_filters": 128,
+        "cqtd_max_filters": 1024,
+        "cqtd_filters_scale": 1,
+        "cqtd_dilations": [1, 2, 4],
+        "cqtd_hop_lengths": [512, 256, 256],
+        "cqtd_n_octaves": [9, 9, 9],
+        "cqtd_bins_per_octaves": [24, 36, 48]
     }
 }

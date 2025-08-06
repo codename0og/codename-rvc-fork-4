@@ -52,8 +52,6 @@ from utils import (
     summarize,
     load_checkpoint,
     save_checkpoint,
-    load_checkpoints,
-    save_checkpoints,
     latest_checkpoint_path,
     load_wav_to_torch,
 )
@@ -153,7 +151,6 @@ enable_persistent_workers = True
 debug_shapes = False
 
 # EXPERIMENTAL
-res_wise_mpd = False
 
 import logging
 logging.getLogger("torch").setLevel(logging.ERROR)
@@ -573,24 +570,13 @@ def run(
     # Initialize discriminator/s
 
     if vocoder == "RingFormer":
-        if not res_wise_mpd:
-            # MultiPeriodDiscriminator
-            from rvc.lib.algorithm.mpd_discriminator import MultiPeriodDiscriminator
-            net_d_mpd = MultiPeriodDiscriminator(
-                config.model.use_spectral_norm, use_checkpointing=use_checkpointing
-            )
-        else:
-            # ResWiseMultiPeriodDiscriminator
-            from rvc.lib.algorithm.custom_discriminators.reswise_mpd_discriminator import ResWiseMultiPeriodDiscriminator
-            net_d_mpd = ResWiseMultiPeriodDiscriminator(use_checkpointing=use_checkpointing)
-
-        # MultiScale-SubBand-CQT Discriminator
-        from rvc.lib.algorithm.custom_discriminators.mssbcqtd import MultiScaleSubbandCQTDiscriminator
-        net_d_cqt = MultiScaleSubbandCQTDiscriminator(use_checkpointing, sample_rate, **dict(config.cqt))
+        # MPD + MSD + MRD
+        from rvc.lib.algorithm.discriminators.multi.mpd_msd_mrd_combined import MPD_MSD_MRD_Combined
+        net_d = MPD_MSD_MRD_Combined(config.model.use_spectral_norm, use_checkpointing=use_checkpointing, **dict(config.mrd))
     else:
         # MultiPeriodDiscriminator + MultiScaleDiscriminator ( unified )
-        from rvc.lib.algorithm.mpd_msd_discriminators import MultiPeriod_MultiScale_Discriminator
-        net_d_mpd = MultiPeriod_MultiScale_Discriminator(
+        from rvc.lib.algorithm.discriminators.multi.mpd_msd_discriminators import MultiPeriod_MultiScale_Discriminator
+        net_d = MultiPeriod_MultiScale_Discriminator(
             config.model.use_spectral_norm, use_checkpointing=use_checkpointing
         )
 
@@ -598,14 +584,10 @@ def run(
 
     if torch.cuda.is_available():
         net_g = net_g.cuda(device_id)
-        net_d_mpd = net_d_mpd.cuda(device_id)
-        if vocoder == "RingFormer":
-            net_d_cqt = net_d_cqt.cuda(device_id)
+        net_d = net_d.cuda(device_id)
     else:
         net_g = net_g.to(device)
-        net_d_mpd = net_d_mpd.to(device)
-        if vocoder == "RingFormer":
-            net_d_cqt = net_d_cqt.to(device)
+        net_d = net_d.to(device)
 
     # Hann window for stft 
     if vocoder == "RingFormer":
@@ -645,7 +627,7 @@ def run(
     if optimizer_choice == "Ranger21":
         from rvc.train.custom_optimizers.ranger21 import Ranger21
 
-        extra_args = dict(
+        ranger_args = dict(
             num_epochs=custom_total_epoch,
             num_batches_per_epoch=len(train_loader),
             use_madgrad=False,
@@ -663,61 +645,30 @@ def run(
             gc_conv_only=True,
             using_normgc=False,
         )
-        optim_g = Ranger21(net_g.parameters(), **common_args_g, **extra_args)
-
-        if vocoder == "RingFormer":
-            combined_disc_params = itertools.chain(net_d_mpd.parameters(), net_d_cqt.parameters())
-            optim_d = Ranger21(combined_disc_params, **common_args_d, **extra_args)
-        else:
-            optim_d = Ranger21(net_d_mpd.parameters(), **common_args_d, **extra_args)
-
+        optim_g = Ranger21(net_g.parameters(), **common_args_g, **ranger_args)
+        optim_d = Ranger21(net_d.parameters(), **common_args_d, **ranger_args)
 
     elif optimizer_choice == "RAdam":
         optim_g = torch_optimizer.RAdam(net_g.parameters(), **common_args_g)
-
-        if vocoder == "RingFormer":
-            combined_disc_params = itertools.chain(net_d_mpd.parameters(), net_d_cqt.parameters())
-            optim_d = torch_optimizer.RAdam(combined_disc_params, **common_args_d)
-        else:
-            optim_d = torch_optimizer.RAdam(net_d_mpd.parameters(), **common_args_d)
-
+        optim_d = torch_optimizer.RAdam(net_d.parameters(), **common_args_d)
 
     elif optimizer_choice == "AdamW":
         optim_g = torch.optim.AdamW(net_g.parameters(), **common_args_g)
-
-        if vocoder == "RingFormer":
-            combined_disc_params = itertools.chain(net_d_mpd.parameters(), net_d_cqt.parameters())
-            optim_d = torch.optim.AdamW(combined_disc_params, **common_args_d)
-        else:
-            optim_d = torch.optim.AdamW(net_d_mpd.parameters(), **common_args_d)
-
+        optim_d = torch.optim.AdamW(net_d.parameters(), **common_args_d)
 
     elif optimizer_choice == "AdamW_BF16":
         # BF16 friendly AdamW variant
         from rvc.train.custom_optimizers.adamw_bfloat import BFF_AdamW
         optim_g = BFF_AdamW(net_g.parameters(), **common_args_g_adamw_bfloat16)
-
-        if vocoder == "RingFormer":
-            combined_disc_params = itertools.chain(net_d_mpd.parameters(), net_d_cqt.parameters())
-            optim_d = BFF_AdamW(combined_disc_params, **common_args_d_adamw_bfloat16)
-        else:
-            optim_d = BFF_AdamW(net_d_mpd.parameters(), **common_args_d_adamw_bfloat16)
-
+        optim_d = BFF_AdamW(net_d.parameters(), **common_args_d_adamw_bfloat16)
 
     elif optimizer_choice == "DiffGrad":
         from rvc.train.custom_optimizers.diffgrad import diffgrad
-
         optim_g = diffgrad(net_g.parameters(), **common_args_g)
-
-        if vocoder == "RingFormer":
-            combined_disc_params = itertools.chain(net_d_mpd.parameters(), net_d_cqt.parameters())
-            optim_d = diffgrad(combined_disc_params, **common_args_d)
-        else:
-            optim_d = diffgrad(net_d_mpd.parameters(), **common_args_d)
-
+        optim_d = diffgrad(net_d.parameters(), **common_args_d)
 
 #        if debug_shapes:
-#            param_ids = set(id(p) for p in itertools.chain(net_d_mpd.parameters(), net_d_cqt.parameters()) if p.requires_grad)
+#            param_ids = set(id(p) for p in net_d.parameters() if p.requires_grad)
 #            optim_param_ids = set(id(p) for group in optim_d.param_groups for p in group['params'])
 #
 #            missing = param_ids - optim_param_ids
@@ -727,7 +678,6 @@ def run(
 #            else:
 #            else:
 #                print("All params present in optimizer.")
-
 
     '''
     - Template for adding custom optims:
@@ -746,6 +696,21 @@ def run(
         optim_d = new_optim(combined_disc_params, **common_args_d, **extra_args)
     '''
 
+# 836
+#    if stft_for_mel:
+#        stft_loss = MultiResolutionSTFTLoss(
+#            fft_sizes=[1024, 2048, 512],
+#            hop_sizes=[512, 1024, 256],
+#            win_lengths=[1024, 2048, 512],
+#            window='hann_window',
+#            w_sc=1.0,
+#            w_log_mag=1.0,
+#            w_lin_mag=0.0,
+#            w_phs=0.0,
+#            sample_rate=sample_rate,
+#            scale=None,
+#            n_bins=None
+#        )
 
     if use_multiscale_mel_loss:
         fn_mel_loss = MultiScaleMelSpectrogramLoss(sample_rate=sample_rate)
@@ -763,18 +728,11 @@ def run(
     # Load checkpoint if available
     try:
         print("    ██████  Starting the training ...")
-        # RingFormer uses 2 discs: MPD and MS-SB-CQT and shared optimizer;
-        if vocoder == "RingFormer":
-            _, _, _, _, epoch_str = load_checkpoints(
-                latest_checkpoint_path(experiment_dir, "D_mpd_cqt_*.pth"), net_d_mpd, net_d_cqt, optimizer = optim_d
-            )
-            print(f"[DEBUG] Discriminator checkpoint loaded. epoch_str: {epoch_str}")
-        else:
-            # Loading of MPD + MSD Discriminator 
-            _, _, _, epoch_str = load_checkpoint(
-                latest_checkpoint_path(experiment_dir, "D_*.pth"), net_d_mpd, optim_d
-            )
-        # Loading of Generator
+        # Discriminator
+        _, _, _, epoch_str = load_checkpoint(
+            latest_checkpoint_path(experiment_dir, "D_*.pth"), net_d, optim_d
+        )
+        # Generator
         _, _, _, epoch_str = load_checkpoint(
             latest_checkpoint_path(experiment_dir, "G_*.pth"), net_g, optim_g
         )
@@ -805,27 +763,14 @@ def run(
             if rank == 0:
                 print(f"Loaded pretrained (D) '{pretrainD}'")
 
-            if vocoder == "RingFormer":
-                checkpoint_dict = torch.load(pretrainD, map_location="cpu", weights_only=True)
-                # Expecting multi-model checkpoint with "mpd" and "cqt"
-                for name, model in zip(["mpd", "cqt"], [net_d_mpd, net_d_cqt]):
-                    if name not in checkpoint_dict:
-                        raise KeyError(f"Missing key '{name}' in RingFormer discriminator checkpoint.")
-                    state_dict = checkpoint_dict[name]
-                    if hasattr(model, "module"):
-                        model.module.load_state_dict(state_dict, strict=True)
-                    else:
-                        model.load_state_dict(state_dict, strict=True)
+            if hasattr(net_d, "module"):
+                net_d.module.load_state_dict(
+                    torch.load(pretrainD, map_location="cpu", weights_only=True)["model"]
+                )
             else:
-                # Single-model discriminator checkpoint
-                if hasattr(net_d_mpd, "module"):
-                    net_d_mpd.module.load_state_dict(
-                        torch.load(pretrainD, map_location="cpu", weights_only=True)["model"]
-                    )
-                else:
-                    net_d_mpd.load_state_dict(
-                        torch.load(pretrainD, map_location="cpu", weights_only=True)["model"]
-                    )
+                net_d.load_state_dict(
+                    torch.load(pretrainD, map_location="cpu", weights_only=True)["model"]
+                )
 
 
     # Check if the training is ' from scratch ' and set appropriate flag
@@ -919,7 +864,7 @@ def run(
             rank,
             epoch,
             config,
-            [net_g, net_d_mpd, net_d_cqt if vocoder == "RingFormer" else None],
+            [net_g, net_d],
             [optim_g, optim_d],
             train_loader,
             val_loader if use_validation else None,
@@ -986,8 +931,8 @@ def training_loop(
         rank (int): Rank of the current process.
         epoch (int): Current epoch number.
         hps (Namespace): Hyperparameters.
-        nets (list): List of models [net_g, net_d_mpd].
-        optims (list): List of optimizers [optim_g, net_d_mpd].
+        nets (list): List of models [net_g, net_d].
+        optims (list): List of optimizers [optim_g, net_d].
         train_loader: training dataloader.
         val_loader: validation dataloader.
         writers (list): List of TensorBoard writers [writer_eval].
@@ -996,11 +941,7 @@ def training_loop(
     """
     global global_step, warmup_completed
 
-    if vocoder == "RingFormer":
-        net_g, net_d_mpd, net_d_cqt = nets
-    else:
-        net_g, net_d_mpd, _ = nets
-
+    net_g, net_d = nets
     optim_g, optim_d = optims
 
     train_loader = train_loader if train_loader is not None else None
@@ -1013,9 +954,7 @@ def training_loop(
     train_loader.batch_sampler.set_epoch(epoch)
 
     net_g.train()
-    net_d_mpd.train()
-    if vocoder == "RingFormer" and net_d_cqt is not None:
-        net_d_cqt.train()
+    net_d.train()
 
     # Data caching
     if device.type == "cuda" and cache_data_in_gpu:
@@ -1035,36 +974,28 @@ def training_loop(
     if not from_scratch:
         # Tensors init for averaged losses:
         if vocoder == "RingFormer":
-            tensor_count = 10
+            tensor_count = 7
         else:
-            tensor_count = 8
+            tensor_count = 6
 
         epoch_loss_tensor = torch.zeros(tensor_count, device=device)
         multi_epoch_loss_tensor = torch.zeros(tensor_count, device=device)
         num_batches_in_epoch = 0
 
     avg_50_cache = {
-        "grad_norm_d_mpd_clipped_50": deque(maxlen=50),
+        "grad_norm_d_clipped_50": deque(maxlen=50),
         "grad_norm_g_clipped_50": deque(maxlen=50),
-
-        "loss_disc_mpd_50": deque(maxlen=50),
-        "loss_disc_total_50": deque(maxlen=50),
-        "loss_gen_total_50": deque(maxlen=50),
-
-        "loss_adv_mpd_50": deque(maxlen=50),
+        "loss_disc_50": deque(maxlen=50),
         "loss_adv_50": deque(maxlen=50),
-
+        "loss_gen_total_50": deque(maxlen=50),
         "loss_fm_50": deque(maxlen=50),
         "loss_mel_50": deque(maxlen=50),
         "loss_kl_50": deque(maxlen=50),
 
     }
-
     if vocoder == "RingFormer":
         avg_50_cache.update({
-            "grad_norm_d_cqt_clipped_50": deque(maxlen=50),
-            "loss_disc_cqt_50": deque(maxlen=50),
-            "loss_adv_cqt_50": deque(maxlen=50),
+            "loss_sd_50": deque(maxlen=50),
         })
 
     with tqdm(total=len(train_loader), leave=False) as pbar:
@@ -1122,43 +1053,25 @@ def training_loop(
             # Discriminator forward pass:
             for _ in range(d_updates_per_step):  # default is 1 update per step
                 with autocast(device_type="cuda", enabled=use_amp, dtype=torch.bfloat16):
-                    y_d_mpd_hat_r, y_d_mpd_hat_g, _, _ = net_d_mpd(y, y_hat.detach())
-
-                    if vocoder == "RingFormer":
-                        y_d_cqt_hat_r, y_d_cqt_hat_g, _, _ = net_d_cqt(y, y_hat.detach())
+                    y_d_hat_r, y_d_hat_g, _, _ = net_d(y, y_hat.detach())
 
                 # Compute discriminator loss:
-                if vocoder == "RingFormer":
-                    loss_disc_mpd = discriminator_loss(y_d_mpd_hat_r, y_d_mpd_hat_g)
-                    loss_disc_cqt = discriminator_loss(y_d_cqt_hat_r, y_d_cqt_hat_g)
-
-                    loss_disc_total = loss_disc_mpd + loss_disc_cqt
-                else:
-                    loss_disc_mpd = discriminator_loss(y_d_mpd_hat_r, y_d_mpd_hat_g)
-
-                    loss_disc_total = loss_disc_mpd
+                loss_disc = discriminator_loss(y_d_hat_r, y_d_hat_g)
 
                 # Discriminator backward and update:
                 optim_d.zero_grad()
-                loss_disc_total.backward()
+                loss_disc.backward()
                 # 1. Grads norm clip
-                grad_norm_d_mpd = torch.nn.utils.clip_grad_norm_(net_d_mpd.parameters(), max_norm=999999) # 1000 / 999999
-                if vocoder == "RingFormer":
-                    grad_norm_d_cqt = torch.nn.utils.clip_grad_norm_(net_d_cqt.parameters(), max_norm=999999) # 1000 / 999999
+                grad_norm_d = torch.nn.utils.clip_grad_norm_(net_d.parameters(), max_norm=999999) # 1000 / 999999
                 # 2. Retrieve the clipped grads
-                grad_norm_d_mpd_clipped = commons.get_total_norm([p.grad for p in net_d_mpd.parameters() if p.grad is not None], norm_type=2.0, error_if_nonfinite=True)
-                if vocoder == "RingFormer":
-                    grad_norm_d_cqt_clipped = commons.get_total_norm([p.grad for p in net_d_cqt.parameters() if p.grad is not None], norm_type=2.0, error_if_nonfinite=True)
+                grad_norm_d_clipped = commons.get_total_norm([p.grad for p in net_d.parameters() if p.grad is not None], norm_type=2.0, error_if_nonfinite=True)
                 # 3. Optimization step
                 optim_d.step()
 
 
             # Run discriminator on generated output
             with autocast(device_type="cuda", enabled=use_amp, dtype=torch.bfloat16):
-                _, y_d_mpd_hat_g, fmap_mpd_r, fmap_mpd_g = net_d_mpd(y, y_hat)
-
-                if vocoder == "RingFormer":
-                    _, y_d_cqt_hat_g, fmap_cqt_r, fmap_cqt_g = net_d_cqt(y, y_hat)
+                _, y_d_hat_g, fmap_r, fmap_g = net_d(y, y_hat)
 
             # Compute generator losses:
             # Multi-Scale and L1 mel loss:
@@ -1190,24 +1103,10 @@ def training_loop(
                 loss_mel = fn_mel_loss(y_mel, y_hat_mel) * config.train.c_mel
 
             # Feature Matching loss
-            if vocoder == "RingFormer":
-                #loss_fm_mpd = feature_loss(fmap_mpd_r, fmap_mpd_g)
-                #loss_fm_cqt = feature_loss(fmap_cqt_r, fmap_cqt_g)
-                #loss_fm = loss_fm_mpd + loss_fm_cqt
-                loss_fm = feature_loss(fmap_mpd_r, fmap_mpd_g) + feature_loss(fmap_cqt_r, fmap_cqt_g)
-            else:
-                loss_fm = feature_loss(fmap_mpd_r, fmap_mpd_g)
+            loss_fm = feature_loss(fmap_r, fmap_g)
  
             # Generator loss 
-            if vocoder == "RingFormer":
-                loss_adv_mpd = generator_loss(y_d_mpd_hat_g)
-                loss_adv_cqt = generator_loss(y_d_cqt_hat_g)
-
-                loss_adv = loss_adv_mpd + loss_adv_cqt
-            else:
-                loss_adv_mpd = generator_loss(y_d_mpd_hat_g)
-
-                loss_adv = loss_adv_mpd
+            loss_adv = generator_loss(y_d_hat_g)
 
             # KL ( Kullback–Leibler divergence ) loss
             loss_kl = kl_loss(z_p, logs_q, m_p, logs_p, z_mask) * config.train.c_kl
@@ -1237,35 +1136,28 @@ def training_loop(
 
             if not from_scratch:
                 # Loss accumulation In the epoch_loss_tensor
-                epoch_loss_tensor[0].add_(loss_disc_total.detach())
-                epoch_loss_tensor[1].add_(loss_disc_mpd.detach())
-                epoch_loss_tensor[2].add_(loss_adv_mpd.detach())
-                epoch_loss_tensor[3].add_(loss_adv.detach())
-                epoch_loss_tensor[4].add_(loss_fm.detach())
-                epoch_loss_tensor[5].add_(loss_mel.detach())
-                epoch_loss_tensor[6].add_(loss_kl.detach())
-                epoch_loss_tensor[7].add_(loss_gen_total.detach())
+                epoch_loss_tensor[0].add_(loss_disc.detach())
+                epoch_loss_tensor[1].add_(loss_adv.detach())
+                epoch_loss_tensor[2].add_(loss_gen_total.detach())
+                epoch_loss_tensor[3].add_(loss_fm.detach())
+                epoch_loss_tensor[4].add_(loss_mel.detach())
+                epoch_loss_tensor[5].add_(loss_kl.detach())
                 if vocoder == "RingFormer":
-                    epoch_loss_tensor[8].add_(loss_disc_cqt.detach())
-                    epoch_loss_tensor[9].add_(loss_adv_cqt.detach())
+                    epoch_loss_tensor[6].add_(loss_sd.detach())
 
             # queue for rolling losses / grads over 50 steps
             # Grads:
-            avg_50_cache["grad_norm_d_mpd_clipped_50"].append(grad_norm_d_mpd_clipped)
+            avg_50_cache["grad_norm_d_clipped_50"].append(grad_norm_d_clipped)
             avg_50_cache["grad_norm_g_clipped_50"].append(grad_norm_g_clipped)
             # Losses:
-            avg_50_cache["loss_disc_total_50"].append(loss_disc_total.detach())
-            avg_50_cache["loss_disc_mpd_50"].append(loss_disc_mpd.detach())
-            avg_50_cache["loss_adv_mpd_50"].append(loss_adv_mpd.detach())
+            avg_50_cache["loss_disc_50"].append(loss_disc.detach())
             avg_50_cache["loss_adv_50"].append(loss_adv.detach())
+            avg_50_cache["loss_gen_total_50"].append(loss_gen_total.detach())
             avg_50_cache["loss_fm_50"].append(loss_fm.detach())
             avg_50_cache["loss_mel_50"].append(loss_mel.detach())
             avg_50_cache["loss_kl_50"].append(loss_kl.detach())
-            avg_50_cache["loss_gen_total_50"].append(loss_gen_total.detach())
             if vocoder == "RingFormer":
-                avg_50_cache["grad_norm_d_cqt_clipped_50"].append(grad_norm_d_cqt_clipped)
-                avg_50_cache["loss_disc_cqt_50"].append(loss_disc_cqt)
-                avg_50_cache["loss_adv_cqt_50"].append(loss_adv_cqt)
+                avg_50_cache["loss_sd_50"].append(loss_sd.detach())
 
             if rank == 0 and global_step % 50 == 0:
                 scalar_dict_50 = {}
@@ -1280,38 +1172,29 @@ def training_loop(
                 # logging rolling averages
                 scalar_dict_50.update({
                     # Grads:
-                    "grad_avg_50/norm_d_mpd_clipped_50": sum(avg_50_cache["grad_norm_d_mpd_clipped_50"])
-                    / len(avg_50_cache["grad_norm_d_mpd_clipped_50"]),
+                    "grad_avg_50/norm_d_clipped_50": sum(avg_50_cache["grad_norm_d_clipped_50"])
+                    / len(avg_50_cache["grad_norm_d_clipped_50"]),
                     "grad_avg_50/norm_g_clipped_50": sum(avg_50_cache["grad_norm_g_clipped_50"])
                     / len(avg_50_cache["grad_norm_g_clipped_50"]),
                     # Losses:
-                    "loss_avg_50/loss_disc_total_50": torch.mean(
-                        torch.stack(list(avg_50_cache["loss_disc_total_50"]))),
-                    "loss_avg_50/loss_disc_mpd_50": torch.mean(
-                        torch.stack(list(avg_50_cache["loss_disc_mpd_50"]))),
-                    "loss_avg_50/loss_adv_mpd_50": torch.mean(
-                        torch.stack(list(avg_50_cache["loss_adv_mpd_50"]))),
+                    "loss_avg_50/loss_disc_50": torch.mean(
+                        torch.stack(list(avg_50_cache["loss_disc_50"]))),
                     "loss_avg_50/loss_adv_50": torch.mean(
                         torch.stack(list(avg_50_cache["loss_adv_50"]))),
+                    "loss_avg_50/loss_gen_total_50": torch.mean(
+                        torch.stack(list(avg_50_cache["loss_gen_total_50"]))),
                     "loss_avg_50/loss_fm_50": torch.mean(
                         torch.stack(list(avg_50_cache["loss_fm_50"]))),
                     "loss_avg_50/loss_mel_50": torch.mean(
                         torch.stack(list(avg_50_cache["loss_mel_50"]))),
                     "loss_avg_50/loss_kl_50": torch.mean(
                         torch.stack(list(avg_50_cache["loss_kl_50"]))),
-                    "loss_avg_50/loss_gen_total_50": torch.mean(
-                        torch.stack(list(avg_50_cache["loss_gen_total_50"]))),
                 })
                 if vocoder == "RingFormer":
                     scalar_dict_50.update({
-                        # Grads:
-                        "grad_avg_50/grad_norm_d_cqt_clipped_50": sum(avg_50_cache["grad_norm_d_cqt_clipped_50"])
-                        / len(avg_50_cache["grad_norm_d_cqt_clipped_50"]),
                         # Losses:
-                        "loss_avg_50/loss_disc_cqt_50": torch.mean( #
-                            torch.stack(list(avg_50_cache["loss_disc_cqt_50"]))), #
-                        "loss_avg_50/loss_adv_cqt_50": torch.mean( #
-                            torch.stack(list(avg_50_cache["loss_adv_cqt_50"]))), #
+                        "loss_avg_50/loss_sd_50": torch.mean(
+                            torch.stack(list(avg_50_cache["loss_sd_50"]))),
                     })
 
                 summarize(writer=writer, global_step=global_step, scalars=scalar_dict_50)
@@ -1375,21 +1258,18 @@ def training_loop(
             avg_epoch_loss = epoch_loss_tensor / num_batches_in_epoch
 
             scalar_dict_avg = {
-            "loss_avg/loss_disc_total": avg_epoch_loss[0],
-            "loss_avg/loss_disc_mpd": avg_epoch_loss[1],
-            "loss_avg/loss_adv_mpd": avg_epoch_loss[2],
-            "loss_avg/loss_adv": avg_epoch_loss[3],
-            "loss_avg/loss_fm": avg_epoch_loss[4],
-            "loss_avg/loss_mel": avg_epoch_loss[5],
-            "loss_avg/loss_kl": avg_epoch_loss[6],
-            "loss_avg/loss_gen_total": avg_epoch_loss[7], #
+            "loss_avg/loss_disc": avg_epoch_loss[0],
+            "loss_avg/loss_adv": avg_epoch_loss[1],
+            "loss_avg/loss_gen_total": avg_epoch_loss[2],
+            "loss_avg/loss_fm": avg_epoch_loss[3],
+            "loss_avg/loss_mel": avg_epoch_loss[4],
+            "loss_avg/loss_kl": avg_epoch_loss[5],
             "learning_rate/lr_d": lr_d,
             "learning_rate/lr_g": lr_g,
             }
             if vocoder == "RingFormer":
                 scalar_dict_avg.update({
-                    "loss_avg/loss_disc_cqt": avg_epoch_loss[7],
-                    "loss_avg/loss_adv_cqt": avg_epoch_loss[8],
+                    "loss_avg/loss_sd": avg_epoch_loss[6],
                 })
 
             summarize(writer=writer, global_step=global_step, scalars=scalar_dict_avg)
@@ -1462,22 +1342,13 @@ def training_loop(
                 os.path.join(experiment_dir, "G_" + checkpoint_suffix),
             )
             # Save Discriminator checkpoint
-            if vocoder == "RingFormer":
-                save_checkpoints(
-                    [net_d_mpd, net_d_cqt],
-                    optim_d,
-                    config.train.learning_rate,
-                    epoch,
-                    os.path.join(experiment_dir, "D_mpd_cqt_" + checkpoint_suffix),
-                )
-            else:
-                save_checkpoint(
-                    net_d_mpd,
-                    optim_d,
-                    config.train.learning_rate,
-                    epoch,
-                    os.path.join(experiment_dir, "D_" + checkpoint_suffix),
-                )
+            save_checkpoint(
+                net_d,
+                optim_d,
+                config.train.learning_rate,
+                epoch,
+                os.path.join(experiment_dir, "D_" + checkpoint_suffix),
+            )
             # Save small weight model
             if custom_save_every_weights:
                 model_add.append(
