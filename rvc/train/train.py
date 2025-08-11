@@ -684,6 +684,16 @@ def run(
         optim_g = BFF_AdamW(net_g.parameters(), **common_args_g_adamw_bfloat16)
         optim_d = BFF_AdamW(net_d.parameters(), **common_args_d_adamw_bfloat16)
 
+    elif optimizer_choice == "Prodigy":
+        from rvc.train.custom_optimizers.prodigy import Prodigy
+        prodigy_args = dict(
+            betas=(0.8, 0.99),
+            weight_decay=0.0,
+            decouple=True,
+        )
+        optim_g = Prodigy(net_g.parameters(), lr=custom_lr_g if use_custom_lr else 1.0, **prodigy_args)
+        optim_d = Prodigy(net_d.parameters(), lr=custom_lr_d if use_custom_lr else 1.0, **prodigy_args)
+
     elif optimizer_choice == "DiffGrad":
         from rvc.train.custom_optimizers.diffgrad import diffgrad
         optim_g = diffgrad(net_g.parameters(), **common_args_g)
@@ -1189,6 +1199,13 @@ def training_loop(
                     "learning_rate/lr_d": lr_d,
                     "learning_rate/lr_g": lr_g,
                     })
+                if optimizer_choice == "Prodigy":
+                    prodigy_lr_g = optim_g.param_groups[0].get('d', 0)
+                    prodigy_lr_d = optim_d.param_groups[0].get('d', 0)
+                    scalar_dict_50.update({
+                        "learning_rate/prodigy_lr_g": prodigy_lr_g,
+                        "learning_rate/prodigy_lr_d": prodigy_lr_d,
+                    })
                 # logging rolling averages
                 scalar_dict_50.update({
                     # Grads:
@@ -1287,6 +1304,13 @@ def training_loop(
             "learning_rate/lr_d": lr_d,
             "learning_rate/lr_g": lr_g,
             }
+            if optimizer_choice == "Prodigy":
+                prodigy_lr_g = optim_g.param_groups[0].get('d', 0)
+                prodigy_lr_d = optim_d.param_groups[0].get('d', 0)
+                scalar_dict_avg.update({
+                    "learning_rate/prodigy_lr_g": prodigy_lr_g,
+                    "learning_rate/prodigy_lr_d": prodigy_lr_d,
+                })
             if vocoder == "RingFormer":
                 scalar_dict_avg.update({
                     "loss_avg/loss_sd": avg_epoch_loss[6],
