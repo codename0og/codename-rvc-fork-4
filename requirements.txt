@@ -49,3 +49,4 @@ pypresence
 beautifulsoup4
 flask
 psutil==7.0.0
+zstandard

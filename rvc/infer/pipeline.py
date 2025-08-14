@@ -537,6 +537,7 @@ class Pipeline:
         f0_autotune,
         f0_autotune_strength,
         f0_file,
+        loaded_index=None,
     ):
         """
         The main pipeline function for performing voice conversion.
@@ -561,17 +562,24 @@ class Pipeline:
             hop_length: Hop length for F0 estimation methods.
             f0_autotune: Whether to apply autotune to the F0 contour.
             f0_file: Path to a file containing an F0 contour to use.
+            loaded_index: A pre-loaded FAISS index object.
         """
         # Index handling
-        if file_index != "" and os.path.exists(file_index) and index_rate > 0:
+        index = big_npy = None
+        if loaded_index is not None and index_rate > 0:
+            try:
+                index = loaded_index
+                big_npy = index.reconstruct_n(0, index.ntotal)
+            except Exception as error:
+                print(f"An error occurred using the loaded FAISS index: {error}")
+                index = big_npy = None
+        elif file_index != "" and os.path.exists(file_index) and index_rate > 0:
             try:
                 index = faiss.read_index(file_index)
                 big_npy = index.reconstruct_n(0, index.ntotal)
             except Exception as error:
                 print(f"An error occurred reading the FAISS index: {error}")
                 index = big_npy = None
-        else:
-            index = big_npy = None
 
         audio = signal.filtfilt(bh, ah, audio)
         audio_pad = np.pad(audio, (self.window // 2, self.window // 2), mode="reflect")

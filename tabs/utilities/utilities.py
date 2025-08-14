@@ -9,6 +9,7 @@ sys.path.append(now_dir)
 from tabs.utilities.processing.processing import processing_tab
 from tabs.utilities.analyzer.analyzer import analyzer_tab
 from tabs.utilities.f0_extractor.f0_extractor import f0_extractor_tab
+from tabs.utilities.uvmp.uvmp import uvmp_tab
 
 
 def utilities_tab():
@@ -23,3 +24,6 @@ def utilities_tab():
 
     with gr.TabItem("Audio Analyzer"):
         analyzer_tab()
+    
+    with gr.TabItem("UVMP Maker"):
+        uvmp_tab()
